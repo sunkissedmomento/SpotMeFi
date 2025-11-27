@@ -1,0 +1,46 @@
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    font-family: 'Montserrat', system-ui, sans-serif;
+  }
+
+  body {
+    @apply bg-black text-white;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-gradient-to-r from-spotify-green via-emerald-400 to-green-300 bg-clip-text text-transparent;
+  }
+
+  .glass {
+    @apply bg-white/[0.02] backdrop-blur-2xl border border-white/[0.05] shadow-2xl;
+  }
+
+  .glass-hover {
+    @apply hover:bg-white/[0.04] hover:border-white/[0.08] transition-all duration-300;
+  }
+
+  .glow-green {
+    @apply shadow-[0_0_30px_rgba(29,185,84,0.3)];
+  }
+
+  .animate-glow {
+    animation: glow 2s ease-in-out infinite alternate;
+  }
+}
+
+@keyframes glow {
+  from {
+    box-shadow: 0 0 20px rgba(29, 185, 84, 0.2);
+  }
+  to {
+    box-shadow: 0 0 40px rgba(29, 185, 84, 0.4);
+  }
+}
