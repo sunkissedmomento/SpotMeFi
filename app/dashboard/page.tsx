@@ -122,6 +122,13 @@ export default function Dashboard() {
           </h1>
 
           <div className="flex items-center gap-4">
+            <div className="text-sm">
+              <span className="text-gray-500">Playlists: </span>
+              <span className={history.length >= 5 ? "text-red-400 font-semibold" : "text-spotify-green font-semibold"}>
+                {history.length}/5
+              </span>
+            </div>
+            <div className="h-6 w-px bg-white/10"></div>
             <button
               onClick={() => {
                 setViewState('history')

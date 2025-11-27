@@ -35,6 +35,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
+    // Check playlist limit (5 per user)
+    const { count, error: countError } = await supabase
+      .from('playlists')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+
+    if (countError) {
+      console.error('Error checking playlist count:', countError)
+    }
+
+    if (count !== null && count >= 5) {
+      return NextResponse.json(
+        {
+          error: 'Playlist limit reached',
+          message: 'You have reached the maximum of 5 playlists. This is a demo version with limited generations.'
+        },
+        { status: 403 }
+      )
+    }
+
     let accessToken = user.access_token
 
     if (!accessToken || Date.now() >= user.token_expires_at) {
