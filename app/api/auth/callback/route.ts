@@ -63,6 +63,12 @@ export async function GET(request: NextRequest) {
     return response
   } catch (error) {
     console.error('Auth callback error:', error)
+    console.error('Error details:', {
+      message: error instanceof Error ? error.message : 'Unknown error',
+      code,
+      redirectUri: process.env.NEXT_PUBLIC_REDIRECT_URI,
+      appUrl: process.env.NEXT_PUBLIC_APP_URL,
+    })
     return NextResponse.redirect(
       `${process.env.NEXT_PUBLIC_APP_URL}/?error=auth_failed`
     )
