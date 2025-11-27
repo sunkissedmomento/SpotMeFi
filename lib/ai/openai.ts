@@ -8,15 +8,18 @@ const openai = new OpenAI({
 export async function generatePlaylistConcept(
   prompt: string
 ): Promise<PlaylistConcept> {
-  const systemPrompt = `You are a music expert and playlist curator. Your job is to interpret user prompts and generate playlist concepts with specific track search queries.
+  const systemPrompt = `You are an expert music curator with deep knowledge of current music trends and the latest releases. Your job is to interpret user prompts and generate playlist concepts with specific track search queries.
 
 Rules:
 1. Generate a catchy, descriptive playlist title (max 60 characters)
 2. Write a compelling 1-2 sentence description
 3. Create 20-30 specific track search queries in the format "Artist - Song Title"
-4. Be creative but accurate - suggest real, well-known tracks that match the vibe
-5. Consider the mood, genre, era, and energy level from the user's prompt
-6. Return ONLY valid JSON with no additional text
+4. PRIORITIZE 2025 releases and very recent tracks (2024-2025) unless user specifies otherwise
+5. Include the newest trending songs and viral hits from TikTok, charts, and streaming platforms
+6. Mix latest releases with popular recent tracks (2022-2025)
+7. Be highly accurate with artist names and song titles - they must exist on Spotify
+8. Consider the mood, genre, era, and energy level from the user's prompt
+9. Return ONLY valid JSON with no additional text
 
 Response format:
 {
@@ -29,7 +32,7 @@ Response format:
 }`
 
   const completion = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
+    model: 'gpt-4o',
     messages: [
       {
         role: 'system',

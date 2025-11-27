@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
         .eq('id', user.id)
     }
 
-    console.log('Generating playlist concept with OpenAI GPT-4o-mini...')
+    console.log('Generating playlist concept with OpenAI GPT-4o...')
     const concept = await generatePlaylistConcept(prompt)
 
     console.log('Searching for tracks on Spotify...')
