@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { SpotifyClient, refreshAccessToken } from '@/lib/spotify/client'
-import { generatePlaylistConcept } from '@/lib/ai/claude'
+import { generatePlaylistConcept } from '@/lib/ai/openai'
 
 export async function POST(request: NextRequest) {
   try {
@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
         .eq('id', user.id)
     }
 
-    console.log('Generating playlist concept with Claude...')
+    console.log('Generating playlist concept with OpenAI GPT-4o-mini...')
     const concept = await generatePlaylistConcept(prompt)
 
     console.log('Searching for tracks on Spotify...')
