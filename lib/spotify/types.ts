@@ -23,6 +23,29 @@ export interface SpotifyTrack {
   }
   uri: string
   popularity: number
+  explicit?: boolean
+  duration_ms?: number
+  preview_url?: string
+}
+
+export interface SpotifyAudioFeatures {
+  id: string
+  acousticness: number        // 0.0 - 1.0
+  danceability: number        // 0.0 - 1.0
+  energy: number              // 0.0 - 1.0
+  instrumentalness: number    // 0.0 - 1.0
+  key: number                 // 0 - 11 (pitch class)
+  liveness: number            // 0.0 - 1.0
+  loudness: number            // -60 - 0 dB
+  mode: number                // 0 = minor, 1 = major
+  speechiness: number         // 0.0 - 1.0
+  tempo: number               // BPM
+  time_signature: number      // 3 - 7
+  valence: number             // 0.0 - 1.0 (musical positiveness)
+}
+
+export interface SpotifyTrackWithFeatures extends SpotifyTrack {
+  audioFeatures?: SpotifyAudioFeatures
 }
 
 export interface SpotifyPlaylist {

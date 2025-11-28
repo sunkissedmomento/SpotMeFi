@@ -1,193 +1,206 @@
+// app/api/generate/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { SpotifyClient, refreshAccessToken } from '@/lib/spotify/client'
 import { generatePlaylistIntent } from '@/lib/ai/claude'
 import { SpotifyTrack } from '@/lib/spotify/types'
+import { rankTracksByMatch } from '@/lib/spotify/track-matcher'
 
-export async function POST(request: NextRequest) {
+export async function POST(req: NextRequest) {
   try {
-    const spotifyUserId = request.cookies.get('spotify_user_id')?.value
+    const spotifyUserId = req.cookies.get('spotify_user_id')?.value
+    if (!spotifyUserId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    if (!spotifyUserId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { prompt } = await request.json()
-
-    if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
-      return NextResponse.json(
-        { error: 'Invalid prompt' },
-        { status: 400 }
-      )
-    }
+    const { prompt, answers } = await req.json()
+    if (!prompt || typeof prompt !== 'string')
+      return NextResponse.json({ error: 'Invalid prompt' }, { status: 400 })
 
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SECRET_KEY!
     )
 
-    const { data: user, error: userError } = await supabase
+    const { data: user } = await supabase
       .from('users')
       .select('*')
       .eq('spotify_id', spotifyUserId)
       .single()
 
-    if (userError || !user) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 })
-    }
+    if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 })
 
-    // Check playlist limit (5 per user)
-    const { count, error: countError } = await supabase
+    const { count } = await supabase
       .from('playlists')
       .select('*', { count: 'exact', head: true })
       .eq('user_id', user.id)
 
-    if (countError) {
-      console.error('Error checking playlist count:', countError)
-    }
+    if (count && count >= 5)
+      return NextResponse.json({ error: 'Playlist limit reached' }, { status: 403 })
 
-    if (count !== null && count >= 5) {
-      return NextResponse.json(
-        {
-          error: 'Playlist limit reached',
-          message: 'You have reached the maximum of 5 playlists. This is a demo version with limited generations.'
-        },
-        { status: 403 }
-      )
-    }
-
+    // ----------------------------
+    // Refresh token if needed
+    // ----------------------------
     let accessToken = user.access_token
-
     if (!accessToken || Date.now() >= user.token_expires_at) {
-      if (!user.refresh_token) {
-        return NextResponse.json(
-          { error: 'Token expired, please login again' },
-          { status: 401 }
-        )
-      }
+      const tokenResp = await refreshAccessToken(user.refresh_token)
+      accessToken = tokenResp.access_token
 
-      const tokenResponse = await refreshAccessToken(user.refresh_token)
-      accessToken = tokenResponse.access_token
-
-      const expiresAt = Date.now() + tokenResponse.expires_in * 1000
       await supabase
         .from('users')
         .update({
-          access_token: tokenResponse.access_token,
-          refresh_token: tokenResponse.refresh_token || user.refresh_token,
-          token_expires_at: expiresAt,
+          access_token: tokenResp.access_token,
+          refresh_token: tokenResp.refresh_token || user.refresh_token,
+          token_expires_at: Date.now() + tokenResp.expires_in * 1000,
         })
         .eq('id', user.id)
     }
 
-    console.log('Analyzing playlist intent with Claude 3.5 Haiku...')
-    const intent = await generatePlaylistIntent(prompt)
-    console.log('Intent:', JSON.stringify(intent, null, 2))
-
-    console.log('Discovering tracks on Spotify based on intent...')
     const spotifyClient = new SpotifyClient(accessToken)
 
-    // Get the track limit from intent or default to 30
-    const trackLimit = intent.track_limit || 30
-    console.log(`Track limit: ${trackLimit}`)
+    // ----------------------------
+    // Extract AI Playlist Intent (with optional answers from clarification)
+    // ----------------------------
+    const intent = await generatePlaylistIntent(prompt, answers ? { answers } : undefined)
 
+    // ----------------------------
+    // Seed & Confirmed Artists
+    // ----------------------------
+    const seedArtists = intent.confirmed_artists?.length
+      ? intent.confirmed_artists
+      : intent.artist_name
+      ? [intent.artist_name]
+      : []
+
+    let detectedArtists: string[] = [...seedArtists]
+
+    // Fallback: detect from prompt
+    if (!detectedArtists.length) {
+      const words = prompt.toLowerCase().split(/,|and|&|\+|\s+/).filter(Boolean)
+      for (let i = 0; i < words.length; i++) {
+        const oneWord = words[i]
+        const twoWord = i < words.length - 1 ? `${words[i]} ${words[i + 1]}` : null
+        const candidates = [oneWord]
+        if (twoWord) candidates.push(twoWord)
+
+        for (const candidate of candidates) {
+          try {
+            const results = await spotifyClient.searchArtists(candidate, 1)
+            if (results?.length && !detectedArtists.includes(results[0].name))
+              detectedArtists.push(results[0].name)
+          } catch {}
+        }
+      }
+    }
+
+    // ----------------------------
+    // Track Discovery
+    // ----------------------------
+    // If user specified a limit, use it. Otherwise, get ALL matching tracks
+    const userSpecifiedLimit = intent.track_limit
+    const maximumTracks = 200 // Safety limit to avoid overwhelming API/DB
     let tracks: SpotifyTrack[] = []
 
-    // Strategy 1: ARTIST-SPECIFIC SEARCH
-    if (intent.artist_name) {
+    // 1️⃣ Seed Artists + Featured Tracks (PRIMARY METHOD)
+    for (const artist of detectedArtists) {
       try {
-        console.log(`Searching for artist: ${intent.artist_name}`)
-        const artistTracks = await spotifyClient.searchArtistTracks(intent.artist_name, trackLimit)
-        tracks.push(...artistTracks)
-        console.log(`Found ${artistTracks.length} tracks by ${intent.artist_name}`)
-      } catch (error) {
-        console.error('Failed to find artist:', error)
-        return NextResponse.json(
-          {
-            error: 'Artist not found',
-            message: `Could not find artist "${intent.artist_name}" on Spotify. Please check the spelling or try a different artist.`
-          },
-          { status: 404 }
-        )
-      }
-    } else {
-      // Strategy 2: Prioritize NEW RELEASES for recent music
-      if (intent.year_focus === 'recent') {
-        try {
-          console.log('Fetching new releases from Spotify...')
-          const newReleases = await spotifyClient.getNewReleases(40)
-          tracks.push(...newReleases)
-        } catch (error) {
-          console.error('Failed to get new releases:', error)
-        }
-      }
+        // Get ALL available tracks from this artist (up to Spotify's limit)
+        const artistTracks = await spotifyClient.searchArtistTracksExact(artist, 50)
+        const featuredTracks = await spotifyClient.searchTrack(`feat ${artist}`, 30)
 
-      // Strategy 3: Search by intent (genres, keywords, year)
-      if (intent.genres.length > 0 || intent.keywords.length > 0) {
-        const yearStart = intent.year_range?.start
-        const yearEnd = intent.year_range?.end
+        tracks = tracks.concat(artistTracks)
+        tracks = tracks.concat(featuredTracks)
 
-        console.log(`Searching with genres: ${intent.genres.join(', ')}, keywords: ${intent.keywords.join(', ')}, year: ${yearStart}-${yearEnd}`)
-
-        const searchTracks = await spotifyClient.discoverTracksByIntent(
-          intent.genres,
-          intent.keywords,
-          yearStart,
-          yearEnd,
-          40
-        )
-        tracks.push(...searchTracks)
-      }
-
-      // Strategy 4: Get recommendations based on genres (fallback)
-      if (tracks.length < 20 && intent.genres.length > 0) {
-        try {
-          console.log('Adding recommendations as fallback...')
-          const recommendations = await spotifyClient.getRecommendations(
-            intent.genres,
-            20
-          )
-          tracks.push(...recommendations)
-        } catch (error) {
-          console.error('Failed to get recommendations:', error)
-        }
+        console.log(`Found ${artistTracks.length} tracks from ${artist}, ${featuredTracks.length} featuring ${artist}`)
+      } catch (err) {
+        console.error(`Failed fetching tracks for artist ${artist}:`, err)
       }
     }
 
-    // Remove duplicates and shuffle randomly
-    const uniqueTracks = tracks
-      .filter((track, index, self) =>
-        self.findIndex(t => t.id === track.id) === index
+    // 2️⃣ Fallback: discover by intent ONLY if no artists were detected
+    if (!tracks.length && detectedArtists.length === 0) {
+      console.log('No artists detected, using generic discovery')
+      const discovered = await spotifyClient.discoverTracksByIntent(
+        intent.genres,
+        intent.keywords,
+        intent.year_range?.start,
+        intent.year_range?.end,
+        100, // Get more tracks for filtering
+        intent.moods,
+        intent.energy_level,
+        intent.language,
+        intent.include_popular ? 'popular' : intent.include_emerging ? 'emerging' : undefined
       )
-      .sort(() => Math.random() - 0.5) // Randomly shuffle
-      .slice(0, trackLimit)
-
-    if (uniqueTracks.length === 0) {
-      return NextResponse.json(
-        { error: 'No tracks found matching the prompt' },
-        { status: 404 }
-      )
+      tracks = tracks.concat(discovered)
     }
 
-    console.log('Creating Spotify playlist...')
+    console.log(`Discovered ${tracks.length} tracks before deduplication`)
+
+    // ----------------------------
+    // Deduplicate
+    // ----------------------------
+    const seen: { [id: string]: boolean } = {}
+    const uniqueTracks = tracks.filter(t => t?.id && !seen[t.id] && (seen[t.id] = true))
+
+    if (!uniqueTracks.length) return NextResponse.json({ error: 'No tracks found' }, { status: 404 })
+
+    // ----------------------------
+    // Enrich with Audio Features (optional - graceful fallback)
+    // ----------------------------
+    let enrichedTracks = uniqueTracks
+    try {
+      enrichedTracks = await spotifyClient.enrichTracksWithAudioFeatures(uniqueTracks)
+    } catch (error) {
+      console.warn('Failed to fetch audio features, proceeding without them:', error)
+      // Continue with tracks without audio features
+      enrichedTracks = uniqueTracks.map(track => ({ ...track, audioFeatures: undefined }))
+    }
+
+    // ----------------------------
+    // Score & Rank Tracks by Checklist
+    // ----------------------------
+    // Use higher threshold if artists were specified (stricter matching)
+    // Lower threshold to get more tracks (trade-off: slightly less relevant)
+    const minScore = detectedArtists.length > 0 ? 30 : 20
+
+    const rankedTracks = rankTracksByMatch(enrichedTracks, intent, prompt, minScore)
+
+    console.log(`Ranked tracks: ${rankedTracks.length} passed filtering (min score: ${minScore})`)
+    console.log('Top 5 scores:', rankedTracks.slice(0, 5).map(t => ({
+      track: t.track.name,
+      artist: t.track.artists[0]?.name,
+      score: t.overallScore,
+      reason: t.matchReason,
+      categoryScores: t.categoryScores
+    })))
+
+    // Take ALL matching tracks (up to user limit or maximum)
+    const trackLimit = userSpecifiedLimit || Math.min(rankedTracks.length, maximumTracks)
+    const finalTracks = rankedTracks.slice(0, trackLimit).map(scored => scored.track)
+
+    console.log(`Selected ${finalTracks.length} tracks for playlist (user limit: ${userSpecifiedLimit || 'none'}, available: ${rankedTracks.length})`)
+
+    if (!finalTracks.length) {
+      console.error('No tracks passed filtering. Try lowering requirements or being more specific.')
+      return NextResponse.json({ error: 'No matching tracks found' }, { status: 404 })
+    }
+
+    // ----------------------------
+    // Create Playlist
+    // ----------------------------
     const playlist = await spotifyClient.createPlaylist(
       spotifyUserId,
       intent.playlist_title,
       intent.playlist_description
     )
 
-    console.log('Adding tracks to playlist...')
-    const trackUris = uniqueTracks.map(track => track.uri)
-    await spotifyClient.addTracksToPlaylist(playlist.id, trackUris)
+    await spotifyClient.addTracksToPlaylist(playlist.id, finalTracks.map(t => t.uri))
 
-    console.log('Saving playlist to database...')
     await supabase.from('playlists').insert({
       user_id: user.id,
       prompt: prompt.trim(),
       playlist_name: intent.playlist_title,
       playlist_description: intent.playlist_description,
       playlist_id_spotify: playlist.id,
-      track_count: uniqueTracks.length,
+      track_count: finalTracks.length,
     })
 
     const finalPlaylist = await spotifyClient.getPlaylist(playlist.id)
@@ -198,24 +211,19 @@ export async function POST(request: NextRequest) {
         name: finalPlaylist.name,
         description: finalPlaylist.description,
         url: finalPlaylist.external_urls.spotify,
-        image: finalPlaylist.images[0]?.url || null,
-        trackCount: uniqueTracks.length,
-        tracks: uniqueTracks
-          .filter(track => track && track.album && track.artists)
-          .map(track => ({
-            id: track.id,
-            name: track.name,
-            artists: track.artists.map(a => a.name).join(', '),
-            album: track.album.name,
-            image: track.album.images?.[0]?.url || null,
-          })),
+        image: finalPlaylist.images?.[0]?.url || null,
+        trackCount: finalTracks.length,
+        tracks: finalTracks.map(t => ({
+          id: t.id,
+          name: t.name,
+          artists: t.artists.map(a => a.name).join(', '),
+          album: t.album.name,
+          image: t.album.images?.[0]?.url || null,
+        })),
       },
     })
-  } catch (error) {
-    console.error('Generate playlist error:', error)
-    return NextResponse.json(
-      { error: 'Failed to generate playlist' },
-      { status: 500 }
-    )
+  } catch (err) {
+    console.error('Error generating playlist:', err)
+    return NextResponse.json({ error: 'Failed to generate playlist' }, { status: 500 })
   }
 }

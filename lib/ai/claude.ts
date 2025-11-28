@@ -13,6 +13,24 @@ export interface PlaylistIntent {
   include_popular: boolean
   include_emerging: boolean
   keywords: string[]
+  confirmed_artists?: string[]
+
+  // ✅ Added for language/region filtering
+  language?: string       // e.g., "English", "Spanish", "Korean"
+  region?: string         // e.g., "US", "UK", "K-pop", "Latin"
+
+  // ✅ Added for clarification flow
+  needsClarification?: boolean
+  clarificationQuestions?: ClarificationQuestion[]
+  confidence?: 'high' | 'medium' | 'low'
+}
+
+export interface ClarificationQuestion {
+  id: string
+  question: string
+  type: 'single-choice' | 'multi-choice' | 'text'
+  options?: string[]
+  suggestedAnswer?: string
 }
 
 const anthropic = new Anthropic({
@@ -20,55 +38,34 @@ const anthropic = new Anthropic({
 })
 
 export async function generatePlaylistIntent(
-  prompt: string
+  prompt: string,
+  previousContext?: { answers?: Record<string, string> }
 ): Promise<PlaylistIntent> {
-  const systemPrompt = `You are a music expert who analyzes user requests and extracts their intent for playlist creation.
+  const systemPrompt = `You are a music expert AI. Your job is to extract structured playlist intent from user requests.
 
-Your job is to understand what the user wants and return structured search parameters that will be used with Spotify's API to find real, current tracks.
+IMPORTANT: Detect if the request needs clarification and suggest helpful questions.
 
-The current year is 2025. Focus on the LATEST music unless the user specifies older time periods.
+- Focus on the latest music (2025) unless the user specifies older years.
+- If a specific artist is mentioned, include them in artist_name and playlist_title, clear genres and keywords.
+- If a number of tracks is specified, set track_limit. Otherwise leave track_limit as null to include ALL matching tracks.
+- Detect genres, moods, and energy level from the prompt.
+- Detect language and region if mentioned.
+- Extract confirmed artists.
+- Return JSON only with no extra text.
 
-Important guidelines:
-1. If the user mentions a SPECIFIC ARTIST NAME (like "Hev Abi", "Drake", "Taylor Swift"):
-   - Set artist_name to the EXACT artist name mentioned
-   - Set playlist_title to include the artist name
-   - Clear genres, keywords arrays (they won't be used)
+CLARIFICATION RULES:
+- Set needsClarification: true if the prompt is vague or ambiguous
+- Set confidence: "low" if missing key info, "medium" if some info is clear, "high" if very specific
+- Generate 2-4 clarification questions to gather missing context:
+  1. Mood/vibe question (if not clear)
+  2. Similar artists inclusion (if only one artist mentioned)
+  3. Activity/context (if applicable)
+  4. Era/year preference (if not specified)
 
-2. If the user specifies a NUMBER of songs (like "50 songs", "maximum 50", "100 tracks", "all songs"):
-   - Set track_limit to that number
-   - For "all" or "maximum" or "complete" → set track_limit to 100
-   - If NOT specified → omit track_limit (defaults to 30)
-
-3. For "latest", "new", "trending", "recent" requests (WITHOUT specific artist):
-   - Set year_focus: "recent"
-   - Set year_range: { "start": 2025, "end": 2025 }
-   - Set include_popular: true
-   - Use keywords like: ["new", "2025", "trending"]
-
-4. Extract genres, moods, and vibes from the prompt
-5. Determine energy level: low (chill/relaxing), medium (moderate), high (energetic/hype)
-6. Create a catchy playlist title and description
-7. Return ONLY valid JSON with no additional text
-
-Response format (artist-specific with track limit):
+Response format:
 {
-  "playlist_title": "Hev Abi Complete Collection",
-  "playlist_description": "A curated collection featuring all tracks by the artist Hev Abi",
-  "artist_name": "Hev Abi",
-  "track_limit": 50,
-  "genres": [],
-  "moods": [],
-  "energy_level": "medium",
-  "year_focus": "mixed",
-  "include_popular": false,
-  "include_emerging": false,
-  "keywords": []
-}
-
-Response format (genre/vibe-based):
-{
-  "playlist_title": "Catchy title (max 60 chars)",
-  "playlist_description": "Brief 1-2 sentence description",
+  "playlist_title": "Catchy title",
+  "playlist_description": "Brief description",
   "genres": ["pop", "hip-hop"],
   "moods": ["energetic", "happy"],
   "energy_level": "high",
@@ -76,8 +73,55 @@ Response format (genre/vibe-based):
   "year_range": { "start": 2025, "end": 2025 },
   "include_popular": true,
   "include_emerging": false,
-  "keywords": ["new", "2025", "viral"]
-}`
+  "keywords": ["new", "trending"],
+  "track_limit": null,
+  "artist_name": "Optional artist",
+  "confirmed_artists": ["Example Artist"],
+  "language": "English",
+  "region": "US",
+  "needsClarification": false,
+  "confidence": "high",
+  "clarificationQuestions": [
+    {
+      "id": "mood",
+      "question": "What mood are you going for?",
+      "type": "single-choice",
+      "options": ["Happy/Upbeat", "Sad/Melancholic", "Energetic/Hype", "Calm/Relaxing"],
+      "suggestedAnswer": "Calm/Relaxing"
+    }
+  ]
+}
+
+EXAMPLES:
+
+Prompt: "sol at luna by geiko playlist"
+→ needsClarification: true, confidence: "medium"
+→ Questions:
+  - "What vibe: just geiko's songs or similar Filipino indie artists too?"
+  - "Mood: melancholic love songs like 'Sol at Luna' or upbeat tracks?"
+  - "Include similar OPM artists like dwta, Keiko Necesario?"
+
+Prompt: "workout music"
+→ needsClarification: true, confidence: "low"
+→ Questions:
+  - "What genre: pop, hip-hop, EDM, rock?"
+  - "Energy level: intense (HIIT), moderate (jogging), or light (yoga)?"
+  - "Any favorite artists?"
+
+Prompt: "Taylor Swift songs for driving at night, 30 tracks"
+→ needsClarification: false, confidence: "high"
+→ Clear intent: artist, context, track count specified`
+
+  // Build the user message with context if available
+  let userMessage = `Extract playlist intent from: "${prompt}"`
+
+  if (previousContext?.answers) {
+    userMessage += `\n\nUser provided additional context:\n`
+    Object.entries(previousContext.answers).forEach(([questionId, answer]) => {
+      userMessage += `- ${questionId}: ${answer}\n`
+    })
+    userMessage += `\nUse this context to refine the intent. Set needsClarification: false and confidence: "high".`
+  }
 
   const message = await anthropic.messages.create({
     model: 'claude-3-5-haiku-20241022',
@@ -85,17 +129,12 @@ Response format (genre/vibe-based):
     temperature: 0.7,
     system: systemPrompt,
     messages: [
-      {
-        role: 'user',
-        content: `Analyze this playlist request and extract the intent: "${prompt}"`,
-      },
+      { role: 'user', content: userMessage },
     ],
   })
 
   const content = message.content[0]
-  if (content.type !== 'text') {
-    throw new Error('Unexpected response type from Claude')
-  }
+  if (content.type !== 'text') throw new Error('Unexpected response type from Claude')
 
   try {
     const parsed = JSON.parse(content.text)
@@ -104,4 +143,40 @@ Response format (genre/vibe-based):
     console.error('Failed to parse Claude response:', content.text)
     throw new Error('Failed to analyze playlist intent')
   }
+}
+
+/**
+ * Refines a playlist intent based on user answers to clarification questions
+ */
+export async function refinePlaylistIntent(
+  originalPrompt: string,
+  answers: Record<string, string>
+): Promise<PlaylistIntent> {
+  return generatePlaylistIntent(originalPrompt, { answers })
+}
+
+/**
+ * Converts user answers to an enhanced prompt string
+ */
+export function buildEnhancedPrompt(
+  originalPrompt: string,
+  answers: Record<string, string>
+): string {
+  let enhanced = originalPrompt
+
+  // Add context from answers
+  const contextParts: string[] = []
+
+  if (answers.mood) contextParts.push(`mood: ${answers.mood}`)
+  if (answers.includeSimilar === 'yes') contextParts.push('include similar artists')
+  if (answers.activity) contextParts.push(`for ${answers.activity}`)
+  if (answers.era) contextParts.push(`from ${answers.era}`)
+  if (answers.genre) contextParts.push(`genre: ${answers.genre}`)
+  if (answers.energy) contextParts.push(`energy: ${answers.energy}`)
+
+  if (contextParts.length > 0) {
+    enhanced += ` (${contextParts.join(', ')})`
+  }
+
+  return enhanced
 }
