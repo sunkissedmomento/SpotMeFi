@@ -39,6 +39,24 @@ interface PlaylistHistory {
 
 type ViewState = 'prompt' | 'loading' | 'result' | 'history'
 
+const bugMessages = [
+  "🧪 We're still teaching the AI the difference between jazz and jazzercise. Results may vary. Bugs included at no extra charge! 🎷🐞",
+  "⚠️ Beta Mode Active: This app is currently being tested in the wild. Bugs may appear like unexpected collaborators on your playlist. 🎵🐛",
+  "🔬 Testing in Production: Because that's where all the best bugs live. Your playlists might have a few surprise features! 🎸🪲",
+  "🎪 Caution: AI Under Construction: May occasionally confuse death metal with lullabies. Sleep tight! 🤘😴",
+  "🚧 Work in Progress: Sometimes our AI thinks every song is by The Beatles. We're working on it! 🪲🎼",
+  "🎲 Rolling the Dice: This playlist generator has a mind of its own. Bugs are just bonus tracks! 🎰🐜",
+  "🎭 Experimental Phase: Our AI is still learning. It once made a 'chill vibes' playlist with only screamo. Good times! 🧘‍♂️🔊",
+  "🌈 Beta Version: Where bugs aren't mistakes, they're Easter eggs! Enjoy the surprises! 🥚🐛",
+  "🎯 Almost Perfect: 60% of the time, it works every time. The other 40%? Pure chaos and magic! ✨🎪",
+  "🎨 Creative Mode: Sometimes the AI gets a little too creative. Last week it invented a new genre. We're still not sure what it is. 🎵❓",
+  "🔮 Fortune Telling: Will your playlist be fire or will it be... interesting? Only one way to find out! 🔥🎲",
+  "🎸 Rock & Debug: This app rocks, but sometimes it bugs. It's all part of the experience! 🪨🐞",
+  "🎺 Jazz Hands Mode: Smooth like jazz, unpredictable like jazz. Bugs sold separately (just kidding, they're free)! 🎷😎",
+  "🎤 Mic Check 1-2: Is this thing on? Testing, testing... bugs, bugs, bugs! 🎙️🐜",
+  "🎹 Beta Symphony: Each bug plays its own unique note in the chaos orchestra. Enjoy the show! 🎼🦗"
+]
+
 export default function Dashboard() {
   const router = useRouter()
   const [user, setUser] = useState<User | null>(null)
@@ -48,6 +66,7 @@ export default function Dashboard() {
   )
   const [history, setHistory] = useState<PlaylistHistory[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [bugMessage] = useState(() => bugMessages[Math.floor(Math.random() * bugMessages.length)])
 
   useEffect(() => {
     fetch('/api/auth/me')
@@ -160,6 +179,12 @@ export default function Dashboard() {
       </nav>
 
       <main className="max-w-7xl mx-auto px-4 py-12">
+        <div className="max-w-3xl mx-auto mb-6 glass rounded-lg p-4 border-yellow-500/30 bg-yellow-500/5">
+          <p className="text-yellow-400 text-center text-sm">
+            {bugMessage}
+          </p>
+        </div>
+
         {error && (
           <div className="max-w-3xl mx-auto mb-6 glass rounded-lg p-4 border-red-500/50">
             <p className="text-red-400 text-center">{error}</p>
