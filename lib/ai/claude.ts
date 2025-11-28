@@ -1,47 +1,67 @@
 import Anthropic from '@anthropic-ai/sdk'
 
-export interface PlaylistConcept {
+export interface PlaylistIntent {
   playlist_title: string
   playlist_description: string
-  track_queries: string[]
+  genres: string[]
+  moods: string[]
+  energy_level: 'low' | 'medium' | 'high'
+  year_focus: 'recent' | 'classic' | 'mixed' | 'specific'
+  year_range?: { start: number; end: number }
+  include_popular: boolean
+  include_emerging: boolean
+  keywords: string[]
 }
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 })
 
-export async function generatePlaylistConcept(
+export async function generatePlaylistIntent(
   prompt: string
-): Promise<PlaylistConcept> {
-  const systemPrompt = `You are a music expert and playlist curator. Your job is to interpret user prompts and generate playlist concepts with specific track search queries.
+): Promise<PlaylistIntent> {
+  const systemPrompt = `You are a music expert who analyzes user requests and extracts their intent for playlist creation.
 
-Rules:
-1. Generate a catchy, descriptive playlist title (max 60 characters)
-2. Write a compelling 1-2 sentence description
-3. Create 20-30 specific track search queries in the format "Artist - Song Title"
-4. Be creative but accurate - suggest real, well-known tracks that match the vibe
-5. Consider the mood, genre, era, and energy level from the user's prompt
-6. Return ONLY valid JSON with no additional text
+Your job is to understand what the user wants and return structured search parameters that will be used with Spotify's API to find real, current tracks.
+
+Important guidelines:
+1. Focus on RECENT music (2024-2025) unless user specifies otherwise
+2. Extract genres, moods, and vibes from the prompt
+3. Determine energy level: low (chill/relaxing), medium (moderate), high (energetic/hype)
+4. For "latest", "new", "trending" requests → set year_focus: "recent" and include_popular: true
+5. Create a catchy playlist title and description
+6. Extract keywords that can be used for Spotify searches
+7. Return ONLY valid JSON with no additional text
 
 Response format:
 {
-  "playlist_title": "The playlist name",
-  "playlist_description": "A brief description of the playlist vibe",
-  "track_queries": [
-    "Artist Name - Song Title",
-    "Another Artist - Another Song"
-  ]
+  "playlist_title": "Catchy title (max 60 chars)",
+  "playlist_description": "Brief 1-2 sentence description",
+  "genres": ["pop", "hip-hop"],
+  "moods": ["energetic", "happy"],
+  "energy_level": "high",
+  "year_focus": "recent",
+  "year_range": { "start": 2024, "end": 2025 },
+  "include_popular": true,
+  "include_emerging": false,
+  "keywords": ["viral", "trending", "upbeat"]
 }`
 
   const message = await anthropic.messages.create({
-    model: 'claude-3-5-sonnet-20241022',
-    max_tokens: 2000,
-    temperature: 0.8,
-    system: systemPrompt,
+    model: 'claude-3-5-haiku-20241022',
+    max_tokens: 1000,
+    temperature: 0.7,
+    system: [
+      {
+        type: 'text',
+        text: systemPrompt,
+        cache_control: { type: 'ephemeral' }
+      }
+    ],
     messages: [
       {
         role: 'user',
-        content: `Create a playlist based on this prompt: "${prompt}"`,
+        content: `Analyze this playlist request and extract the intent: "${prompt}"`,
       },
     ],
   })
@@ -53,9 +73,9 @@ Response format:
 
   try {
     const parsed = JSON.parse(content.text)
-    return parsed as PlaylistConcept
+    return parsed as PlaylistIntent
   } catch (error) {
     console.error('Failed to parse Claude response:', content.text)
-    throw new Error('Failed to generate playlist concept')
+    throw new Error('Failed to analyze playlist intent')
   }
 }

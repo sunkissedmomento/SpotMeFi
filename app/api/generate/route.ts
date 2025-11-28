@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { SpotifyClient, refreshAccessToken } from '@/lib/spotify/client'
-import { generatePlaylistConcept } from '@/lib/ai/openai'
+import { generatePlaylistIntent } from '@/lib/ai/claude'
+import { SpotifyTrack } from '@/lib/spotify/types'
 
 export async function POST(request: NextRequest) {
   try {
@@ -79,28 +80,61 @@ export async function POST(request: NextRequest) {
         .eq('id', user.id)
     }
 
-    console.log('Generating playlist concept with OpenAI GPT-4o...')
-    const concept = await generatePlaylistConcept(prompt)
+    console.log('Analyzing playlist intent with Claude 3.5 Haiku...')
+    const intent = await generatePlaylistIntent(prompt)
 
-    console.log('Searching for tracks on Spotify...')
+    console.log('Discovering tracks on Spotify based on intent...')
     const spotifyClient = new SpotifyClient(accessToken)
 
-    const trackPromises = concept.track_queries.map(query =>
-      spotifyClient.searchTrack(query).catch(err => {
-        console.error(`Failed to search for "${query}":`, err)
-        return []
-      })
-    )
+    let tracks: SpotifyTrack[] = []
 
-    const trackResults = await Promise.all(trackPromises)
-    const tracks = trackResults
-      .flat()
+    // Strategy 1: Search by intent (genres, keywords, year)
+    if (intent.genres.length > 0 || intent.keywords.length > 0) {
+      const yearStart = intent.year_range?.start
+      const yearEnd = intent.year_range?.end
+
+      const searchTracks = await spotifyClient.discoverTracksByIntent(
+        intent.genres,
+        intent.keywords,
+        yearStart,
+        yearEnd,
+        50
+      )
+      tracks.push(...searchTracks)
+    }
+
+    // Strategy 2: Get recommendations based on genres
+    if (intent.include_popular && intent.genres.length > 0) {
+      try {
+        const recommendations = await spotifyClient.getRecommendations(
+          intent.genres,
+          30
+        )
+        tracks.push(...recommendations)
+      } catch (error) {
+        console.error('Failed to get recommendations:', error)
+      }
+    }
+
+    // Strategy 3: Include new releases if requested
+    if (intent.year_focus === 'recent') {
+      try {
+        const newReleases = await spotifyClient.getNewReleases(30)
+        tracks.push(...newReleases)
+      } catch (error) {
+        console.error('Failed to get new releases:', error)
+      }
+    }
+
+    // Remove duplicates and sort by popularity
+    const uniqueTracks = tracks
       .filter((track, index, self) =>
         self.findIndex(t => t.id === track.id) === index
       )
+      .sort((a, b) => b.popularity - a.popularity)
       .slice(0, 30)
 
-    if (tracks.length === 0) {
+    if (uniqueTracks.length === 0) {
       return NextResponse.json(
         { error: 'No tracks found matching the prompt' },
         { status: 404 }
@@ -110,22 +144,22 @@ export async function POST(request: NextRequest) {
     console.log('Creating Spotify playlist...')
     const playlist = await spotifyClient.createPlaylist(
       spotifyUserId,
-      concept.playlist_title,
-      concept.playlist_description
+      intent.playlist_title,
+      intent.playlist_description
     )
 
     console.log('Adding tracks to playlist...')
-    const trackUris = tracks.map(track => track.uri)
+    const trackUris = uniqueTracks.map(track => track.uri)
     await spotifyClient.addTracksToPlaylist(playlist.id, trackUris)
 
     console.log('Saving playlist to database...')
     await supabase.from('playlists').insert({
       user_id: user.id,
       prompt: prompt.trim(),
-      playlist_name: concept.playlist_title,
-      playlist_description: concept.playlist_description,
+      playlist_name: intent.playlist_title,
+      playlist_description: intent.playlist_description,
       playlist_id_spotify: playlist.id,
-      track_count: tracks.length,
+      track_count: uniqueTracks.length,
     })
 
     const finalPlaylist = await spotifyClient.getPlaylist(playlist.id)
@@ -137,8 +171,8 @@ export async function POST(request: NextRequest) {
         description: finalPlaylist.description,
         url: finalPlaylist.external_urls.spotify,
         image: finalPlaylist.images[0]?.url || null,
-        trackCount: tracks.length,
-        tracks: tracks.map(track => ({
+        trackCount: uniqueTracks.length,
+        tracks: uniqueTracks.map(track => ({
           id: track.id,
           name: track.name,
           artists: track.artists.map(a => a.name).join(', '),
