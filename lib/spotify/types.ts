@@ -22,6 +22,7 @@ export interface SpotifyTrack {
     images: { url: string }[]
   }
   uri: string
+  popularity: number
 }
 
 export interface SpotifyPlaylist {
