@@ -55,8 +55,8 @@ Edit `.env.local` and paste your values:
 ```env
 # Supabase (from step 3)
 NEXT_PUBLIC_SUPABASE_URL=https://xxxxx.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key_here
-SUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your_publishable_key_here
+SUPABASE_SECRET_KEY=your_secret_key_here
 
 # Spotify (from step 2)
 SPOTIFY_CLIENT_ID=your_client_id_here
