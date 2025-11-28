@@ -196,11 +196,63 @@ export class SpotifyClient {
       audioFeatures: audioFeatures[index] || undefined,
     }))
   }
+
+  // ----------------------------
+  // User Info
+  // ----------------------------
+  async getCurrentUser(): Promise<SpotifyUser> {
+    return this.fetch('/me')
+  }
 }
 
 // ----------------------------
 // OAuth Helpers
 // ----------------------------
+export function getAuthorizationUrl(): string {
+  const scopes = [
+    'user-read-private',
+    'user-read-email',
+    'playlist-modify-public',
+    'playlist-modify-private',
+  ]
+
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: process.env.SPOTIFY_CLIENT_ID!,
+    scope: scopes.join(' '),
+    redirect_uri: process.env.NEXT_PUBLIC_REDIRECT_URI!,
+  })
+
+  return `${SPOTIFY_ACCOUNTS_BASE}/authorize?${params.toString()}`
+}
+
+export async function exchangeCodeForToken(code: string): Promise<SpotifyTokenResponse> {
+  const params = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code,
+    redirect_uri: process.env.NEXT_PUBLIC_REDIRECT_URI!,
+  })
+
+  const res = await fetch(`${SPOTIFY_ACCOUNTS_BASE}/api/token`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Authorization: `Basic ${Buffer.from(
+        `${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`
+      ).toString('base64')}`,
+    },
+    body: params.toString(),
+  })
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    console.error('Token exchange failed:', errorText)
+    throw new Error('Failed to exchange code for token')
+  }
+
+  return res.json()
+}
+
 export async function refreshAccessToken(refreshToken: string): Promise<SpotifyTokenResponse> {
   const params = new URLSearchParams({
     grant_type: 'refresh_token',
