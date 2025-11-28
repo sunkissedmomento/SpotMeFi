@@ -9,6 +9,7 @@ export async function GET(request: NextRequest) {
   const error = searchParams.get('error')
 
   if (error || !code) {
+    console.error('Auth failed - no code or error from Spotify:', { error, code, hasCode: !!code })
     return NextResponse.redirect(
       `${process.env.NEXT_PUBLIC_APP_URL}/?error=auth_failed`
     )

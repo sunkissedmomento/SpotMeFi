@@ -82,57 +82,85 @@ export async function POST(request: NextRequest) {
 
     console.log('Analyzing playlist intent with Claude 3.5 Haiku...')
     const intent = await generatePlaylistIntent(prompt)
+    console.log('Intent:', JSON.stringify(intent, null, 2))
 
     console.log('Discovering tracks on Spotify based on intent...')
     const spotifyClient = new SpotifyClient(accessToken)
 
+    // Get the track limit from intent or default to 30
+    const trackLimit = intent.track_limit || 30
+    console.log(`Track limit: ${trackLimit}`)
+
     let tracks: SpotifyTrack[] = []
 
-    // Strategy 1: Search by intent (genres, keywords, year)
-    if (intent.genres.length > 0 || intent.keywords.length > 0) {
-      const yearStart = intent.year_range?.start
-      const yearEnd = intent.year_range?.end
-
-      const searchTracks = await spotifyClient.discoverTracksByIntent(
-        intent.genres,
-        intent.keywords,
-        yearStart,
-        yearEnd,
-        50
-      )
-      tracks.push(...searchTracks)
-    }
-
-    // Strategy 2: Get recommendations based on genres
-    if (intent.include_popular && intent.genres.length > 0) {
+    // Strategy 1: ARTIST-SPECIFIC SEARCH
+    if (intent.artist_name) {
       try {
-        const recommendations = await spotifyClient.getRecommendations(
-          intent.genres,
-          30
+        console.log(`Searching for artist: ${intent.artist_name}`)
+        const artistTracks = await spotifyClient.searchArtistTracks(intent.artist_name, trackLimit)
+        tracks.push(...artistTracks)
+        console.log(`Found ${artistTracks.length} tracks by ${intent.artist_name}`)
+      } catch (error) {
+        console.error('Failed to find artist:', error)
+        return NextResponse.json(
+          {
+            error: 'Artist not found',
+            message: `Could not find artist "${intent.artist_name}" on Spotify. Please check the spelling or try a different artist.`
+          },
+          { status: 404 }
         )
-        tracks.push(...recommendations)
-      } catch (error) {
-        console.error('Failed to get recommendations:', error)
+      }
+    } else {
+      // Strategy 2: Prioritize NEW RELEASES for recent music
+      if (intent.year_focus === 'recent') {
+        try {
+          console.log('Fetching new releases from Spotify...')
+          const newReleases = await spotifyClient.getNewReleases(40)
+          tracks.push(...newReleases)
+        } catch (error) {
+          console.error('Failed to get new releases:', error)
+        }
+      }
+
+      // Strategy 3: Search by intent (genres, keywords, year)
+      if (intent.genres.length > 0 || intent.keywords.length > 0) {
+        const yearStart = intent.year_range?.start
+        const yearEnd = intent.year_range?.end
+
+        console.log(`Searching with genres: ${intent.genres.join(', ')}, keywords: ${intent.keywords.join(', ')}, year: ${yearStart}-${yearEnd}`)
+
+        const searchTracks = await spotifyClient.discoverTracksByIntent(
+          intent.genres,
+          intent.keywords,
+          yearStart,
+          yearEnd,
+          40
+        )
+        tracks.push(...searchTracks)
+      }
+
+      // Strategy 4: Get recommendations based on genres (fallback)
+      if (tracks.length < 20 && intent.genres.length > 0) {
+        try {
+          console.log('Adding recommendations as fallback...')
+          const recommendations = await spotifyClient.getRecommendations(
+            intent.genres,
+            20
+          )
+          tracks.push(...recommendations)
+        } catch (error) {
+          console.error('Failed to get recommendations:', error)
+        }
       }
     }
 
-    // Strategy 3: Include new releases if requested
-    if (intent.year_focus === 'recent') {
-      try {
-        const newReleases = await spotifyClient.getNewReleases(30)
-        tracks.push(...newReleases)
-      } catch (error) {
-        console.error('Failed to get new releases:', error)
-      }
-    }
-
-    // Remove duplicates and sort by popularity
+    // Remove duplicates and shuffle randomly
     const uniqueTracks = tracks
       .filter((track, index, self) =>
         self.findIndex(t => t.id === track.id) === index
       )
-      .sort((a, b) => b.popularity - a.popularity)
-      .slice(0, 30)
+      .sort(() => Math.random() - 0.5) // Randomly shuffle
+      .slice(0, trackLimit)
 
     if (uniqueTracks.length === 0) {
       return NextResponse.json(
@@ -172,13 +200,15 @@ export async function POST(request: NextRequest) {
         url: finalPlaylist.external_urls.spotify,
         image: finalPlaylist.images[0]?.url || null,
         trackCount: uniqueTracks.length,
-        tracks: uniqueTracks.map(track => ({
-          id: track.id,
-          name: track.name,
-          artists: track.artists.map(a => a.name).join(', '),
-          album: track.album.name,
-          image: track.album.images[0]?.url || null,
-        })),
+        tracks: uniqueTracks
+          .filter(track => track && track.album && track.artists)
+          .map(track => ({
+            id: track.id,
+            name: track.name,
+            artists: track.artists.map(a => a.name).join(', '),
+            album: track.album.name,
+            image: track.album.images?.[0]?.url || null,
+          })),
       },
     })
   } catch (error) {
