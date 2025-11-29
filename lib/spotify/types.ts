@@ -58,6 +58,9 @@ export interface SpotifyPlaylist {
   images: { url: string }[]
   tracks: {
     total: number
+    items: Array<{
+      track: SpotifyTrack
+    }>
   }
 }
 
