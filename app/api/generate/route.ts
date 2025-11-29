@@ -119,13 +119,13 @@ export async function POST(req: NextRequest) {
     // ----------------------------
     // If user specified a limit, use it. Otherwise, get ALL matching tracks
     const userSpecifiedLimit = intent.track_limit
-    const maximumTracks = 200 // Safety limit to avoid overwhelming API/DB
+    const maximumTracks = 500 // Increased limit for larger playlists
     let tracks: SpotifyTrack[] = []
 
     // 1️⃣ Seed Artists + Featured Tracks (PRIMARY METHOD)
     for (const artist of detectedArtists) {
       try {
-        // Get ALL available tracks from this artist (up to Spotify's limit)
+        // Get more tracks from this artist
         const artistTracks = await spotifyClient.searchArtistTracksExact(artist, 50)
         const featuredTracks = await spotifyClient.searchTrack(`feat ${artist}`, 30)
 
@@ -138,21 +138,26 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 2️⃣ Fallback: discover by intent ONLY if no artists were detected
-    if (!tracks.length && detectedArtists.length === 0) {
-      console.log('No artists detected, using generic discovery')
-      const discovered = await spotifyClient.discoverTracksByIntent(
-        intent.genres,
-        intent.keywords,
-        intent.year_range?.start,
-        intent.year_range?.end,
-        100, // Get more tracks for filtering
-        intent.moods,
-        intent.energy_level,
-        intent.language,
-        intent.include_popular ? 'popular' : intent.include_emerging ? 'emerging' : undefined
-      )
-      tracks = tracks.concat(discovered)
+    // 2️⃣ ALWAYS supplement with genre/keyword-based discovery for more variety
+    if (intent.genres.length > 0 || intent.keywords.length > 0 || detectedArtists.length === 0) {
+      console.log('Supplementing with genre/keyword-based discovery for more tracks')
+      try {
+        const discovered = await spotifyClient.discoverTracksByIntent(
+          intent.genres,
+          intent.keywords,
+          intent.year_range?.start,
+          intent.year_range?.end,
+          200, // Increased from 100 to get more tracks
+          intent.moods,
+          intent.energy_level,
+          intent.language,
+          intent.include_popular ? 'popular' : intent.include_emerging ? 'emerging' : undefined
+        )
+        tracks = tracks.concat(discovered)
+        console.log(`Added ${discovered.length} tracks from genre/keyword discovery`)
+      } catch (err) {
+        console.error('Failed genre-based discovery:', err)
+      }
     }
 
     console.log(`Discovered ${tracks.length} tracks before deduplication`)
@@ -203,9 +208,8 @@ export async function POST(req: NextRequest) {
     // ----------------------------
     // Score & Rank Tracks by Checklist
     // ----------------------------
-    // Use higher threshold if artists were specified (stricter matching)
-    // Lower threshold to get more tracks (trade-off: slightly less relevant)
-    const minScore = detectedArtists.length > 0 ? 30 : 20
+    // Lower threshold to include more tracks
+    const minScore = detectedArtists.length > 0 ? 20 : 10
 
     const rankedTracks = rankTracksByMatch(enrichedTracks, intent, prompt, minScore)
 
