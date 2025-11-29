@@ -111,9 +111,32 @@ export async function POST(
       }
     }
 
-    // Deduplicate - don't add tracks already in playlist
+    // Deduplicate - don't add tracks already in playlist (by ID or song name + artist)
     const existingTrackIds = new Set(currentTracks.map((t: any) => t.id))
-    tracksToAdd = tracksToAdd.filter(t => !existingTrackIds.has(t.id))
+    const existingSongs = new Set(
+      currentTracks.map((t: any) => {
+        const artistNames = t.artists.map((a: any) => a.name.toLowerCase().trim()).sort().join(', ')
+        return `${artistNames} - ${t.name.toLowerCase().trim()}`
+      })
+    )
+
+    tracksToAdd = tracksToAdd.filter(t => {
+      // Check track ID
+      if (existingTrackIds.has(t.id)) {
+        console.log(`Skipping duplicate track ID: "${t.name}"`)
+        return false
+      }
+
+      // Check song name + artist combination
+      const artistNames = t.artists.map(a => a.name.toLowerCase().trim()).sort().join(', ')
+      const songKey = `${artistNames} - ${t.name.toLowerCase().trim()}`
+      if (existingSongs.has(songKey)) {
+        console.log(`Skipping duplicate song: "${t.name}" by ${t.artists.map(a => a.name).join(', ')} (different album/single)`)
+        return false
+      }
+
+      return true
+    })
 
     console.log(`Adding ${tracksToAdd.length} new tracks`)
 

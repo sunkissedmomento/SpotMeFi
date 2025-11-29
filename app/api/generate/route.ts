@@ -165,10 +165,33 @@ export async function POST(req: NextRequest) {
     console.log(`Discovered ${tracks.length} tracks before deduplication`)
 
     // ----------------------------
-    // Deduplicate
+    // Deduplicate by Track ID AND Song Name + Artist
     // ----------------------------
-    const seen: { [id: string]: boolean } = {}
-    const uniqueTracks = tracks.filter(t => t?.id && !seen[t.id] && (seen[t.id] = true))
+    // This prevents the same song from appearing multiple times even if it's from different albums/singles
+    const seenIds: { [id: string]: boolean } = {}
+    const seenSongs: { [key: string]: boolean } = {}
+
+    const uniqueTracks = tracks.filter(t => {
+      if (!t?.id) return false
+
+      // Check if we've seen this track ID
+      if (seenIds[t.id]) return false
+
+      // Create a normalized key: "artist1, artist2 - song name" (lowercase, trimmed)
+      const artistNames = t.artists.map(a => a.name.toLowerCase().trim()).sort().join(', ')
+      const songKey = `${artistNames} - ${t.name.toLowerCase().trim()}`
+
+      // Check if we've seen this exact song (same name + artists)
+      if (seenSongs[songKey]) {
+        console.log(`Skipping duplicate: "${t.name}" by ${t.artists.map(a => a.name).join(', ')} (different album/single)`)
+        return false
+      }
+
+      // Mark as seen
+      seenIds[t.id] = true
+      seenSongs[songKey] = true
+      return true
+    })
 
     if (!uniqueTracks.length) return NextResponse.json({ error: 'No tracks found' }, { status: 404 })
 
