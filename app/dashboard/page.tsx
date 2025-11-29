@@ -149,6 +149,9 @@ export default function Dashboard() {
       // Update the generated playlist with refined version
       setGeneratedPlaylist(data.playlist)
 
+      // Close the modal
+      setIsRefineModalOpen(false)
+
       // Refresh history
       fetch('/api/playlists')
         .then((res) => res.json())
@@ -270,12 +273,6 @@ export default function Dashboard() {
                 setIsRefineModalOpen(true)
               }}
             />
-            <PlaylistRefineModal
-              isOpen={isRefineModalOpen}
-              onClose={() => setIsRefineModalOpen(false)}
-              onRefine={handleRefinePlaylist}
-              playlistName={generatedPlaylist.name}
-            />
           </div>
         )}
 
@@ -320,14 +317,25 @@ export default function Dashboard() {
                           </span>
                         </div>
                       </div>
-                      <a
-                        href={`https://open.spotify.com/playlist/${item.playlist_id_spotify}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="bg-spotify-green hover:bg-spotify-green/90 text-white text-sm font-semibold py-2 px-4 rounded-full transition-all duration-200"
-                      >
-                        Open
-                      </a>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            setCurrentPlaylistId(item.id)
+                            setIsRefineModalOpen(true)
+                          }}
+                          className="glass hover:bg-white/10 text-white text-sm font-semibold py-2 px-4 rounded-full transition-all duration-200"
+                        >
+                          Refine
+                        </button>
+                        <a
+                          href={`https://open.spotify.com/playlist/${item.playlist_id_spotify}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="bg-spotify-green hover:bg-spotify-green/90 text-white text-sm font-semibold py-2 px-4 rounded-full transition-all duration-200"
+                        >
+                          Open
+                        </a>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -335,6 +343,17 @@ export default function Dashboard() {
             )}
           </div>
         )}
+
+        <PlaylistRefineModal
+          isOpen={isRefineModalOpen}
+          onClose={() => setIsRefineModalOpen(false)}
+          onRefine={handleRefinePlaylist}
+          playlistName={
+            generatedPlaylist?.id === currentPlaylistId
+              ? generatedPlaylist.name
+              : history.find(p => p.id === currentPlaylistId)?.playlist_name || 'Playlist'
+          }
+        />
       </main>
     </div>
   )
