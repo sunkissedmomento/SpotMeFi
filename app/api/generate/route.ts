@@ -163,11 +163,22 @@ export async function POST(req: NextRequest) {
     console.log(`Discovered ${tracks.length} tracks before deduplication`)
 
     // ----------------------------
-    // Deduplicate by Track ID AND Song Name + Artist
+    // Aggressive Deduplication - No duplicate songs allowed
     // ----------------------------
-    // This prevents the same song from appearing multiple times even if it's from different albums/singles
+    // Prevents same song from appearing multiple times (different albums, remixes, versions)
     const seenIds: { [id: string]: boolean } = {}
     const seenSongs: { [key: string]: boolean } = {}
+
+    // Normalize song name: remove version info, special chars, lowercase
+    const normalizeSongName = (name: string): string => {
+      return name
+        .toLowerCase()
+        .replace(/\s*\(.*?\)\s*/g, '') // Remove anything in parentheses: (Remix), (Radio Edit), (feat. X)
+        .replace(/\s*\[.*?\]\s*/g, '') // Remove anything in brackets
+        .replace(/[^\w\s]/g, '') // Remove special characters
+        .replace(/\s+/g, ' ') // Normalize whitespace
+        .trim()
+    }
 
     const uniqueTracks = tracks.filter(t => {
       if (!t?.id) return false
@@ -175,19 +186,29 @@ export async function POST(req: NextRequest) {
       // Check if we've seen this track ID
       if (seenIds[t.id]) return false
 
-      // Create a normalized key: "artist1, artist2 - song name" (lowercase, trimmed)
-      const artistNames = t.artists.map(a => a.name.toLowerCase().trim()).sort().join(', ')
-      const songKey = `${artistNames} - ${t.name.toLowerCase().trim()}`
+      // Create normalized keys for deduplication
+      const primaryArtist = t.artists[0]?.name.toLowerCase().trim()
+      const allArtists = t.artists.map(a => a.name.toLowerCase().trim()).sort().join(', ')
+      const normalizedSong = normalizeSongName(t.name)
 
-      // Check if we've seen this exact song (same name + artists)
-      if (seenSongs[songKey]) {
-        console.log(`Skipping duplicate: "${t.name}" by ${t.artists.map(a => a.name).join(', ')} (different album/single)`)
-        return false
+      // Check multiple variations to catch all duplicates
+      const keys = [
+        `${primaryArtist} - ${normalizedSong}`, // Primary artist + song
+        `${allArtists} - ${normalizedSong}`, // All artists + song
+        `${allArtists} - ${t.name.toLowerCase().trim()}`, // Original name
+      ]
+
+      // If any key was seen before, it's a duplicate
+      for (const key of keys) {
+        if (seenSongs[key]) {
+          console.log(`⚠️ Duplicate removed: "${t.name}" by ${t.artists.map(a => a.name).join(', ')}`)
+          return false
+        }
       }
 
-      // Mark as seen
+      // Mark all keys as seen
       seenIds[t.id] = true
-      seenSongs[songKey] = true
+      keys.forEach(key => seenSongs[key] = true)
       return true
     })
 

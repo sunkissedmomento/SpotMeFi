@@ -111,28 +111,56 @@ export async function POST(
       }
     }
 
-    // Deduplicate - don't add tracks already in playlist (by ID or song name + artist)
+    // Aggressive Deduplication - never add duplicate songs to playlist
     const existingTrackIds = new Set(currentTracks.map((t: any) => t.id))
-    const existingSongs = new Set(
-      currentTracks.map((t: any) => {
-        const artistNames = t.artists.map((a: any) => a.name.toLowerCase().trim()).sort().join(', ')
-        return `${artistNames} - ${t.name.toLowerCase().trim()}`
-      })
-    )
+
+    // Normalize song name: remove version info, special chars
+    const normalizeSongName = (name: string): string => {
+      return name
+        .toLowerCase()
+        .replace(/\s*\(.*?\)\s*/g, '') // Remove (Remix), (Radio Edit), (feat. X)
+        .replace(/\s*\[.*?\]\s*/g, '') // Remove [anything]
+        .replace(/[^\w\s]/g, '') // Remove special characters
+        .replace(/\s+/g, ' ') // Normalize whitespace
+        .trim()
+    }
+
+    // Build set of existing song signatures
+    const existingSongs = new Set<string>()
+    currentTracks.forEach((t: any) => {
+      const primaryArtist = t.artists[0]?.name.toLowerCase().trim()
+      const allArtists = t.artists.map((a: any) => a.name.toLowerCase().trim()).sort().join(', ')
+      const normalizedSong = normalizeSongName(t.name)
+
+      // Add multiple keys to catch all variations
+      existingSongs.add(`${primaryArtist} - ${normalizedSong}`)
+      existingSongs.add(`${allArtists} - ${normalizedSong}`)
+      existingSongs.add(`${allArtists} - ${t.name.toLowerCase().trim()}`)
+    })
 
     tracksToAdd = tracksToAdd.filter(t => {
       // Check track ID
       if (existingTrackIds.has(t.id)) {
-        console.log(`Skipping duplicate track ID: "${t.name}"`)
+        console.log(`⚠️ Skipping duplicate track ID: "${t.name}"`)
         return false
       }
 
-      // Check song name + artist combination
-      const artistNames = t.artists.map(a => a.name.toLowerCase().trim()).sort().join(', ')
-      const songKey = `${artistNames} - ${t.name.toLowerCase().trim()}`
-      if (existingSongs.has(songKey)) {
-        console.log(`Skipping duplicate song: "${t.name}" by ${t.artists.map(a => a.name).join(', ')} (different album/single)`)
-        return false
+      // Check song name + artist with multiple variations
+      const primaryArtist = t.artists[0]?.name.toLowerCase().trim()
+      const allArtists = t.artists.map(a => a.name.toLowerCase().trim()).sort().join(', ')
+      const normalizedSong = normalizeSongName(t.name)
+
+      const keys = [
+        `${primaryArtist} - ${normalizedSong}`,
+        `${allArtists} - ${normalizedSong}`,
+        `${allArtists} - ${t.name.toLowerCase().trim()}`,
+      ]
+
+      for (const key of keys) {
+        if (existingSongs.has(key)) {
+          console.log(`⚠️ Duplicate removed: "${t.name}" by ${t.artists.map(a => a.name).join(', ')}`)
+          return false
+        }
       }
 
       return true
