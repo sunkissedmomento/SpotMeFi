@@ -40,8 +40,7 @@ const anthropic = new Anthropic({
 export async function generatePlaylistIntent(
   prompt: string,
   previousContext?: { answers?: Record<string, string> },
-  userPreferences?: { topArtists: string[], topGenres: string[] },
-  learnedPreferences?: { favoriteGenres: string[], favoriteMoods: string[], favoriteArtists: string[] }
+  userPreferences?: { topArtists: string[], topGenres: string[] }
 ): Promise<PlaylistIntent> {
   const systemPrompt = `You are a music expert AI. Your job is to extract structured playlist intent from user requests.
 
@@ -120,26 +119,11 @@ Prompt: "Taylor Swift songs for driving at night, 30 tracks"
 
   // Add user preferences if available
   if (userPreferences && userPreferences.topArtists.length > 0) {
-    userMessage += `\n\nUser's music taste (from Spotify listening history):\n`
+    userMessage += `\n\nUser's music taste (from listening history):\n`
     userMessage += `- Top Artists: ${userPreferences.topArtists.slice(0, 10).join(', ')}\n`
     if (userPreferences.topGenres.length > 0) {
       userMessage += `- Preferred Genres: ${userPreferences.topGenres.join(', ')}\n`
     }
-  }
-
-  // Add learned preferences from SpotMefi usage
-  if (learnedPreferences && learnedPreferences.favoriteGenres.length > 0) {
-    userMessage += `\n\nUser's SpotMefi patterns (learned from past playlists):\n`
-    userMessage += `- Most Requested Genres: ${learnedPreferences.favoriteGenres.join(', ')}\n`
-    if (learnedPreferences.favoriteMoods.length > 0) {
-      userMessage += `- Preferred Moods: ${learnedPreferences.favoriteMoods.join(', ')}\n`
-    }
-    if (learnedPreferences.favoriteArtists.length > 0) {
-      userMessage += `- Frequently Requested Artists: ${learnedPreferences.favoriteArtists.slice(0, 5).join(', ')}\n`
-    }
-  }
-
-  if ((userPreferences && userPreferences.topArtists.length > 0) || (learnedPreferences && learnedPreferences.favoriteGenres.length > 0)) {
     userMessage += `\nConsider this when the user's prompt is vague or doesn't specify artists/genres. For example:\n`
     userMessage += `- If they say "chill music", prioritize artists they already listen to\n`
     userMessage += `- If they say "something new", use similar artists from their preferred genres\n`

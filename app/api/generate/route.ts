@@ -5,7 +5,6 @@ import { SpotifyClient, refreshAccessToken } from '@/lib/spotify/client'
 import { generatePlaylistIntent } from '@/lib/ai/claude'
 import { SpotifyTrack } from '@/lib/spotify/types'
 import { rankTracksByMatch } from '@/lib/spotify/track-matcher'
-import { learnFromPlaylist, getUserLearnedPreferences, getTopGenres, getTopMoods } from '@/lib/preferences/learner'
 
 export async function POST(req: NextRequest) {
   try {
@@ -62,7 +61,6 @@ export async function POST(req: NextRequest) {
     // ----------------------------
     let userTopArtists: any[] = []
     let userTopTracks: any[] = []
-    let learnedPreferences = await getUserLearnedPreferences(user.id)
 
     try {
       // Get user's top artists and tracks from last 6 months
@@ -83,11 +81,6 @@ export async function POST(req: NextRequest) {
       userTopArtists.length > 0 ? {
         topArtists: userTopArtists.map(a => a.name),
         topGenres: userTopArtists.flatMap(a => a.genres || []).slice(0, 5)
-      } : undefined,
-      learnedPreferences ? {
-        favoriteGenres: getTopGenres(learnedPreferences, 5),
-        favoriteMoods: getTopMoods(learnedPreferences, 3),
-        favoriteArtists: learnedPreferences.favorite_artists.slice(0, 10)
       } : undefined
     )
 
@@ -255,17 +248,6 @@ export async function POST(req: NextRequest) {
       playlist_id_spotify: playlist.id,
       track_count: finalTracks.length,
     }).select().single()
-
-    // ----------------------------
-    // Learn from this playlist generation
-    // ----------------------------
-    await learnFromPlaylist(
-      user.id,
-      intent.genres,
-      intent.moods,
-      detectedArtists,
-      finalTracks.length
-    )
 
     const finalPlaylist = await spotifyClient.getPlaylist(playlist.id)
 

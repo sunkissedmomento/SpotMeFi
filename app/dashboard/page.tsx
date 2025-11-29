@@ -205,12 +205,6 @@ export default function Dashboard() {
             >
               New Playlist
             </button>
-            <button
-              onClick={() => router.push('/preferences')}
-              className="text-gray-400 hover:text-white transition-colors"
-            >
-              Preferences
-            </button>
             <div className="h-6 w-px bg-white/10"></div>
             <span className="text-sm text-gray-400">{user.display_name}</span>
             <button
