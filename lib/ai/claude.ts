@@ -39,7 +39,9 @@ const anthropic = new Anthropic({
 
 export async function generatePlaylistIntent(
   prompt: string,
-  previousContext?: { answers?: Record<string, string> }
+  previousContext?: { answers?: Record<string, string> },
+  userPreferences?: { topArtists: string[], topGenres: string[] },
+  learnedPreferences?: { favoriteGenres: string[], favoriteMoods: string[], favoriteArtists: string[] }
 ): Promise<PlaylistIntent> {
   const systemPrompt = `You are a music expert AI. Your job is to extract structured playlist intent from user requests.
 
@@ -48,6 +50,7 @@ IMPORTANT: Detect if the request needs clarification and suggest helpful questio
 - Focus on the latest music (2025) unless the user specifies older years.
 - If a specific artist is mentioned, include them in artist_name and playlist_title, clear genres and keywords.
 - If a number of tracks is specified, set track_limit. Otherwise leave track_limit as null to include ALL matching tracks.
+- If user preferences (top artists/genres) are provided, consider them when making recommendations for vague requests.
 - Detect genres, moods, and energy level from the prompt.
 - Detect language and region if mentioned.
 - Extract confirmed artists.
@@ -115,6 +118,34 @@ Prompt: "Taylor Swift songs for driving at night, 30 tracks"
   // Build the user message with context if available
   let userMessage = `Extract playlist intent from: "${prompt}"`
 
+  // Add user preferences if available
+  if (userPreferences && userPreferences.topArtists.length > 0) {
+    userMessage += `\n\nUser's music taste (from Spotify listening history):\n`
+    userMessage += `- Top Artists: ${userPreferences.topArtists.slice(0, 10).join(', ')}\n`
+    if (userPreferences.topGenres.length > 0) {
+      userMessage += `- Preferred Genres: ${userPreferences.topGenres.join(', ')}\n`
+    }
+  }
+
+  // Add learned preferences from SpotMefi usage
+  if (learnedPreferences && learnedPreferences.favoriteGenres.length > 0) {
+    userMessage += `\n\nUser's SpotMefi patterns (learned from past playlists):\n`
+    userMessage += `- Most Requested Genres: ${learnedPreferences.favoriteGenres.join(', ')}\n`
+    if (learnedPreferences.favoriteMoods.length > 0) {
+      userMessage += `- Preferred Moods: ${learnedPreferences.favoriteMoods.join(', ')}\n`
+    }
+    if (learnedPreferences.favoriteArtists.length > 0) {
+      userMessage += `- Frequently Requested Artists: ${learnedPreferences.favoriteArtists.slice(0, 5).join(', ')}\n`
+    }
+  }
+
+  if ((userPreferences && userPreferences.topArtists.length > 0) || (learnedPreferences && learnedPreferences.favoriteGenres.length > 0)) {
+    userMessage += `\nConsider this when the user's prompt is vague or doesn't specify artists/genres. For example:\n`
+    userMessage += `- If they say "chill music", prioritize artists they already listen to\n`
+    userMessage += `- If they say "something new", use similar artists from their preferred genres\n`
+    userMessage += `- If they're specific about an artist/genre, ignore preferences and use their request\n`
+  }
+
   if (previousContext?.answers) {
     userMessage += `\n\nUser provided additional context:\n`
     Object.entries(previousContext.answers).forEach(([questionId, answer]) => {
@@ -179,4 +210,85 @@ export function buildEnhancedPrompt(
   }
 
   return enhanced
+}
+
+export interface PlaylistRefinementResult {
+  tracksToAdd: string[]      // Track search queries (e.g., "artist - song name")
+  tracksToRemove: string[]   // Track IDs to remove from playlist
+  reasoning: string          // Explanation of changes
+}
+
+/**
+ * Refines an existing playlist based on user's additional prompt
+ */
+export async function refineExistingPlaylist(
+  originalPrompt: string,
+  currentTracks: Array<{ id: string; name: string; artists: Array<{ name: string }> }>,
+  refinementPrompt: string
+): Promise<PlaylistRefinementResult> {
+  const systemPrompt = `You are a music expert AI. Your job is to refine existing playlists based on user feedback.
+
+The user will provide:
+1. Original prompt used to create the playlist
+2. Current list of tracks in the playlist
+3. Refinement request (e.g., "add more upbeat songs", "remove slow tracks")
+
+Your task:
+- Analyze the refinement request
+- Determine which tracks to ADD (return as search queries: "artist - song name")
+- Determine which tracks to REMOVE (return as track IDs)
+- Provide clear reasoning for the changes
+
+Response format (JSON only, no extra text):
+{
+  "tracksToAdd": ["Artist Name - Song Name", "Another Artist - Another Song"],
+  "tracksToRemove": ["track_id_1", "track_id_2"],
+  "reasoning": "Added 5 upbeat tracks to increase energy. Removed 3 slow ballads that didn't fit the vibe."
+}
+
+RULES:
+- For "add more X" requests: return 5-10 track search queries
+- For "remove Y" requests: identify track IDs from current list that match criteria
+- For "make it more Z" requests: both add and remove tracks
+- For "add X tracks" with specific number: return that many track queries
+- If refinement is vague, make reasonable assumptions based on original prompt
+- Track search queries should be: "Artist Name - Song Title" format`
+
+  const trackList = currentTracks
+    .map((t, i) => `${i + 1}. [${t.id}] ${t.artists.map(a => a.name).join(', ')} - ${t.name}`)
+    .join('\n')
+
+  const userMessage = `Original prompt: "${originalPrompt}"
+
+Current tracks (${currentTracks.length} total):
+${trackList}
+
+Refinement request: "${refinementPrompt}"
+
+Analyze and return the tracks to add/remove in JSON format.`
+
+  const message = await anthropic.messages.create({
+    model: 'claude-3-5-haiku-20241022',
+    max_tokens: 1500,
+    temperature: 0.7,
+    system: systemPrompt,
+    messages: [
+      { role: 'user', content: userMessage },
+    ],
+  })
+
+  const content = message.content[0]
+  if (content.type !== 'text') throw new Error('Unexpected response type from Claude')
+
+  try {
+    const parsed = JSON.parse(content.text)
+    return {
+      tracksToAdd: parsed.tracksToAdd || [],
+      tracksToRemove: parsed.tracksToRemove || [],
+      reasoning: parsed.reasoning || 'Playlist refined based on your request',
+    }
+  } catch (error) {
+    console.error('Failed to parse Claude response:', content.text)
+    throw new Error('Failed to analyze refinement request')
+  }
 }

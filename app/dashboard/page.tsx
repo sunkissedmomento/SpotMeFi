@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import PromptInput from '@/components/PromptInput'
 import LoadingState from '@/components/LoadingState'
 import PlaylistSummary from '@/components/PlaylistSummary'
+import PlaylistRefineModal from '@/components/PlaylistRefineModal'
 
 interface User {
   id: string
@@ -67,6 +68,8 @@ export default function Dashboard() {
   const [history, setHistory] = useState<PlaylistHistory[]>([])
   const [error, setError] = useState<string | null>(null)
   const [bugMessage] = useState(() => bugMessages[Math.floor(Math.random() * bugMessages.length)])
+  const [isRefineModalOpen, setIsRefineModalOpen] = useState(false)
+  const [currentPlaylistId, setCurrentPlaylistId] = useState<string | null>(null)
 
   useEffect(() => {
     fetch('/api/auth/me')
@@ -123,6 +126,42 @@ export default function Dashboard() {
     }
   }
 
+  const handleRefinePlaylist = async (refinementPrompt: string) => {
+    if (!currentPlaylistId) return
+
+    setError(null)
+
+    try {
+      const response = await fetch(`/api/playlists/${currentPlaylistId}/refine`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ refinementPrompt }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to refine playlist')
+      }
+
+      // Update the generated playlist with refined version
+      setGeneratedPlaylist(data.playlist)
+
+      // Refresh history
+      fetch('/api/playlists')
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.playlists) {
+            setHistory(data.playlists)
+          }
+        })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred')
+    }
+  }
+
   const handleLogout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' })
     router.push('/')
@@ -165,6 +204,12 @@ export default function Dashboard() {
               className="text-gray-400 hover:text-white transition-colors"
             >
               New Playlist
+            </button>
+            <button
+              onClick={() => router.push('/preferences')}
+              className="text-gray-400 hover:text-white transition-colors"
+            >
+              Preferences
             </button>
             <div className="h-6 w-px bg-white/10"></div>
             <span className="text-sm text-gray-400">{user.display_name}</span>
@@ -226,6 +271,16 @@ export default function Dashboard() {
                 setViewState('prompt')
                 setGeneratedPlaylist(null)
               }}
+              onRefine={() => {
+                setCurrentPlaylistId(generatedPlaylist.id)
+                setIsRefineModalOpen(true)
+              }}
+            />
+            <PlaylistRefineModal
+              isOpen={isRefineModalOpen}
+              onClose={() => setIsRefineModalOpen(false)}
+              onRefine={handleRefinePlaylist}
+              playlistName={generatedPlaylist.name}
             />
           </div>
         )}

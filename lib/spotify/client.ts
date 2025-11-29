@@ -203,6 +203,37 @@ export class SpotifyClient {
   async getCurrentUser(): Promise<SpotifyUser> {
     return this.fetch('/me')
   }
+
+  // ----------------------------
+  // User Preferences
+  // ----------------------------
+  async getUserTopTracks(timeRange: 'short_term' | 'medium_term' | 'long_term' = 'medium_term', limit: number = 20): Promise<SpotifyTrack[]> {
+    try {
+      const params = new URLSearchParams({
+        time_range: timeRange,
+        limit: limit.toString(),
+      })
+      const data: any = await this.fetch(`/me/top/tracks?${params}`)
+      return data.items || []
+    } catch (error) {
+      console.error('Failed to fetch user top tracks:', error)
+      return []
+    }
+  }
+
+  async getUserTopArtists(timeRange: 'short_term' | 'medium_term' | 'long_term' = 'medium_term', limit: number = 20): Promise<any[]> {
+    try {
+      const params = new URLSearchParams({
+        time_range: timeRange,
+        limit: limit.toString(),
+      })
+      const data: any = await this.fetch(`/me/top/artists?${params}`)
+      return data.items || []
+    } catch (error) {
+      console.error('Failed to fetch user top artists:', error)
+      return []
+    }
+  }
 }
 
 // ----------------------------
@@ -214,6 +245,7 @@ export function getAuthorizationUrl(): string {
     'user-read-email',
     'playlist-modify-public',
     'playlist-modify-private',
+    'user-top-read', // Access user's top artists and tracks
   ]
 
   const params = new URLSearchParams({

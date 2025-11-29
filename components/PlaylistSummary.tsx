@@ -23,11 +23,13 @@ interface Playlist {
 interface PlaylistSummaryProps {
   playlist: Playlist
   onCreateAnother: () => void
+  onRefine?: () => void
 }
 
 export default function PlaylistSummary({
   playlist,
   onCreateAnother,
+  onRefine,
 }: PlaylistSummaryProps) {
   return (
     <div className="w-full max-w-3xl mx-auto space-y-6">
@@ -61,6 +63,14 @@ export default function PlaylistSummary({
           >
             Open in Spotify
           </a>
+          {onRefine && (
+            <button
+              onClick={onRefine}
+              className="flex-1 glass hover:bg-white/10 text-white font-semibold py-3 px-6 rounded-full transition-all duration-200"
+            >
+              Refine Playlist
+            </button>
+          )}
           <button
             onClick={onCreateAnother}
             className="flex-1 glass hover:bg-white/10 text-white font-semibold py-3 px-6 rounded-full transition-all duration-200"

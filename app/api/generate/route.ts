@@ -5,6 +5,7 @@ import { SpotifyClient, refreshAccessToken } from '@/lib/spotify/client'
 import { generatePlaylistIntent } from '@/lib/ai/claude'
 import { SpotifyTrack } from '@/lib/spotify/types'
 import { rankTracksByMatch } from '@/lib/spotify/track-matcher'
+import { learnFromPlaylist, getUserLearnedPreferences, getTopGenres, getTopMoods } from '@/lib/preferences/learner'
 
 export async function POST(req: NextRequest) {
   try {
@@ -57,9 +58,38 @@ export async function POST(req: NextRequest) {
     const spotifyClient = new SpotifyClient(accessToken)
 
     // ----------------------------
+    // Get User Preferences (Top Artists & Tracks)
+    // ----------------------------
+    let userTopArtists: any[] = []
+    let userTopTracks: any[] = []
+    let learnedPreferences = await getUserLearnedPreferences(user.id)
+
+    try {
+      // Get user's top artists and tracks from last 6 months
+      userTopArtists = await spotifyClient.getUserTopArtists('medium_term', 20)
+      userTopTracks = await spotifyClient.getUserTopTracks('medium_term', 10)
+
+      console.log(`User preferences: ${userTopArtists.length} top artists, ${userTopTracks.length} top tracks`)
+    } catch (error) {
+      console.warn('Could not fetch user preferences, continuing without them:', error)
+    }
+
+    // ----------------------------
     // Extract AI Playlist Intent (with optional answers from clarification)
     // ----------------------------
-    const intent = await generatePlaylistIntent(prompt, answers ? { answers } : undefined)
+    const intent = await generatePlaylistIntent(
+      prompt,
+      answers ? { answers } : undefined,
+      userTopArtists.length > 0 ? {
+        topArtists: userTopArtists.map(a => a.name),
+        topGenres: userTopArtists.flatMap(a => a.genres || []).slice(0, 5)
+      } : undefined,
+      learnedPreferences ? {
+        favoriteGenres: getTopGenres(learnedPreferences, 5),
+        favoriteMoods: getTopMoods(learnedPreferences, 3),
+        favoriteArtists: learnedPreferences.favorite_artists.slice(0, 10)
+      } : undefined
+    )
 
     // ----------------------------
     // Seed & Confirmed Artists
@@ -194,20 +224,32 @@ export async function POST(req: NextRequest) {
 
     await spotifyClient.addTracksToPlaylist(playlist.id, finalTracks.map(t => t.uri))
 
-    await supabase.from('playlists').insert({
+    const { data: insertedPlaylist } = await supabase.from('playlists').insert({
       user_id: user.id,
       prompt: prompt.trim(),
       playlist_name: intent.playlist_title,
       playlist_description: intent.playlist_description,
       playlist_id_spotify: playlist.id,
       track_count: finalTracks.length,
-    })
+    }).select().single()
+
+    // ----------------------------
+    // Learn from this playlist generation
+    // ----------------------------
+    await learnFromPlaylist(
+      user.id,
+      intent.genres,
+      intent.moods,
+      detectedArtists,
+      finalTracks.length
+    )
 
     const finalPlaylist = await spotifyClient.getPlaylist(playlist.id)
 
     return NextResponse.json({
       playlist: {
-        id: finalPlaylist.id,
+        id: insertedPlaylist?.id || finalPlaylist.id,
+        spotifyId: finalPlaylist.id,
         name: finalPlaylist.name,
         description: finalPlaylist.description,
         url: finalPlaylist.external_urls.spotify,
