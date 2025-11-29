@@ -229,7 +229,8 @@ export async function POST(
         tracksRemoved: refinementResult.tracksToRemove.length,
       },
       playlist: {
-        id: updatedPlaylist.id,
+        id: playlistId, // Use database ID, not Spotify ID
+        spotifyId: updatedPlaylist.id,
         name: updatedPlaylist.name,
         description: updatedPlaylist.description,
         url: updatedPlaylist.external_urls.spotify,
